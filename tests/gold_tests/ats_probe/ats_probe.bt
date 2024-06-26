@@ -73,7 +73,7 @@ interval:s:1
 usdt:*:start_connection_with_ip_addresses
  {     
     $client_ip = str(arg0);
-    $conn_id = str(arg2)
+    $conn_id = arg2;
 
     printf("New connection from IP: %s\n", $client_ip);
     @connections[$client_ip]++; // Count connections by client IP
