@@ -36,7 +36,7 @@ interval:s:1
 // Iterate over elements in @lasttransaction map
     for ($kv : @lasttransaction)
     {
-        $client_ip = $kv.0; // Get client IP (key)
+        $conn_id = $kv.0; // Get client IP (key)
         $last_txn_time = $kv.1; // Get last transaction time (value)
         $idle_threshold_ns = 60 * 1000000000; // 60 seconds in nanoseconds
 
@@ -47,9 +47,14 @@ interval:s:1
             // Check if connection is idle
             if ((int64)$time_since_last_txn > $idle_threshold_ns)
             {
+                $client_ip = @conn_id_to_ip[$conn_id];
                 // Increment idle connection count
-                @idle_connections[$client_ip]++;
-                printf("Idle connection from IP: %s\n", $client_ip);
+                if ($client_ip != "")
+                {
+                    // Increment idle connection count
+                    @idle_connections[$client_ip]++;
+                    printf("Idle connection from IP: %s\n", $client_ip);
+                }
             }
         }
     }
@@ -68,10 +73,12 @@ interval:s:1
 usdt:*:start_connection_with_ip_addresses
  {     
     $client_ip = str(arg0);
+    $conn_id = str(arg2)
 
     printf("New connection from IP: %s\n", $client_ip);
     @connections[$client_ip]++; // Count connections by client IP
-    @lasttransaction[$client_ip] = nsecs; // Store last transaction time with client IP
+    @lasttransaction[$conn_id] = nsecs; // Store last transaction time with client IP
+    @conn_id_to_ip[$conn_id] = $client_ip
  }
 
 
@@ -88,6 +95,7 @@ END
 
     printf("\nIdle Connections:\n");
     // Print idle connections
-    
+    print(@idle_connections);
+
 }
     
