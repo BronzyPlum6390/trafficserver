@@ -27,6 +27,7 @@
 BEGIN
 {
   @readlines = 1;
+  printf("Monitoring ATS connections and transactions...\n");
 }
 
 
@@ -81,20 +82,35 @@ usdt:*:start_connection_with_ip_addresses
     @conn_id_to_ip[$conn_id] = $client_ip
  }
 
+// Attach to the connection_closed probe to remove connection from maps
+usdt:*:connection_closed
+{
+    $conn_id = arg0;
 
+    printf("Connection closed: conn_id %d\n", $conn_id);
+    delete(@lasttransaction[$conn_id]);
+    delete(@conn_id_to_ip[$conn_id]);
+}
+
+usdt:*:transaction_finished
+{
+    $conn_id = arg0;
+    $client_ip = @conn_id_to_ip[$conn_id];
+    printf("Transaction finished: conn_id %d\n", $conn_id);
+
+}
 
 // Print the result on exit
 
 END
 {
-    printf("\nConnections by client IP:\n");
+    printf("\nFinal Statistics:\n");
+    printf("Connections by client IP:\n");
     print(@connections);
     printf("\nTotal lines read: %d\n", @readlines);
-    printf("\nLast transaction stamps by client IP:\n");
+    printf("\nLast transaction timestamps by connection ID:\n");
     print(@lasttransaction);
-
-    printf("\nIdle Connections:\n");
-    // Print idle connections
+    printf("\nFinal Idle Connections:\n");
     print(@idle_connections);
 
 }

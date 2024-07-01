@@ -23,6 +23,8 @@
 
 #include "proxy/http/HttpSM.h"
 #include "proxy/Plugin.h"
+#include "ts/ats_probe.h"
+#include "proxy/ProxyTransaction.h"
 
 #define HttpTxnDebug(fmt, ...) SsnDebug(this, "http_txn", fmt, __VA_ARGS__)
 
@@ -184,6 +186,8 @@ ProxyTransaction::transaction_done()
 {
   SCOPED_MUTEX_LOCK(lock, this->mutex, this_ethread());
   this->decrement_transactions_stat();
+  auto conn_id = _proxy_ssn->connection_id();
+  ATS_PROBE1(transaction_finished, conn_id);
 }
 
 // Implement VConnection interface.
@@ -275,6 +279,8 @@ ProxyTransaction::allow_half_open() const
 void
 ProxyTransaction::set_close_connection(HTTPHdr &hdr) const
 {
+  auto conn_id = _proxy_ssn->connection_id();
+  ATS_PROBE1(connection_closed, conn_id);
 }
 
 void
