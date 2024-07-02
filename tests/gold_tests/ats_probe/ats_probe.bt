@@ -46,7 +46,7 @@ interval:s:1
             $time_since_last_txn = nsecs - $last_txn_time;
 
             // Check if connection is idle
-            if ((int64)$time_since_last_txn > $idle_threshold_ns)
+            if ((int64)$time_since_last_txn > $idle_threshold_ns && @idle_marked[$conn_id] == 0)
             {
                 $client_ip = @conn_id_to_ip[$conn_id];
                 // Increment idle connection count
@@ -55,6 +55,7 @@ interval:s:1
                     // Increment idle connection count
                     @idle_connections[$client_ip]++;
                     printf("Idle connection from IP: %s\n", $client_ip);
+                    @idle_marked[$conn_id] = 1; // Mark this connection as already announced idle
                 }
             }
         }
@@ -64,7 +65,7 @@ interval:s:1
 
 // Attach to the new_origin_server_connection probe
  usdt:*:new_origin_server_connection
- {
+ {  
      printf("new_origin_server_connection: %s\n", str(arg0));
      @readlines++;
  }
@@ -79,7 +80,8 @@ usdt:*:start_connection_with_ip_addresses
     printf("New connection from IP: %s\n", $client_ip);
     @connections[$client_ip]++; // Count connections by client IP
     @lasttransaction[$conn_id] = nsecs; // Store last transaction time with client IP
-    @conn_id_to_ip[$conn_id] = $client_ip
+    @conn_id_to_ip[$conn_id] = $client_ip;
+    @idle_marked[$conn_id];
  }
 
 // Attach to the connection_closed probe to remove connection from maps
@@ -90,6 +92,7 @@ usdt:*:connection_closed
     printf("Connection closed: conn_id %d\n", $conn_id);
     delete(@lasttransaction[$conn_id]);
     delete(@conn_id_to_ip[$conn_id]);
+    delete(@idle_marked[$conn_id]);
 }
 
 usdt:*:transaction_finished
@@ -97,6 +100,7 @@ usdt:*:transaction_finished
     $conn_id = arg0;
     $client_ip = @conn_id_to_ip[$conn_id];
     printf("Transaction finished: conn_id %d\n", $conn_id);
+    @idle_marked[$conn_id] = 0; //Reset the Idle Mark
 
 }
 

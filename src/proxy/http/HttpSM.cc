@@ -1700,7 +1700,6 @@ HttpSM::create_server_session(NetVConnection &netvc, MIOBuffer *netvc_read_buffe
   retval->sharing_match = static_cast<TSServerSessionSharingMatchMask>(t_state.txn_conf->server_session_sharing_match);
   retval->attach_hostname(t_state.current.server->name);
   retval->new_connection(&netvc, netvc_read_buffer, netvc_reader);
-
   ATS_PROBE1(new_origin_server_connection, t_state.current.server->name);
   Dbg(dbg_ctl_ip_address, "Ip origin Found: %s", t_state.current.server->name);
   retval->set_active();
