@@ -40,13 +40,15 @@ interval:s:1
         $conn_id = $kv.0; // Get client IP (key)
         $last_txn_time = $kv.1; // Get last transaction time (value)
         $idle_threshold_ns = 60 * 1000000000; // 60 seconds in nanoseconds
+        $time_since_last_txn = nsecs - $last_txn_time;
 
-        if ($last_txn_time != 0)
-        {
-            $time_since_last_txn = nsecs - $last_txn_time;
+        printf("Conn ID: %d, Time since last txn: %d s\n", $conn_id, $time_since_last_txn / 1000000000);
+
+        
+            
 
             // Check if connection is idle
-            if ((int64)$time_since_last_txn > $idle_threshold_ns && @idle_marked[$conn_id] == 0)
+            if ($last_txn_time != 0 && (int64)$time_since_last_txn > $idle_threshold_ns && @idle_marked[$conn_id] == 0)
             {
                 $client_ip = @conn_id_to_ip[$conn_id];
                 // Increment idle connection count
@@ -57,8 +59,17 @@ interval:s:1
                     printf("Idle connection from IP: %s\n", $client_ip);
                     @idle_marked[$conn_id] = 1; // Mark this connection as already announced idle
                 }
+                else
+                {
+                    printf("Warning: No IP found for conn_id: %d\n", $conn_id);
+                }
             }
-        }
+            else
+            {
+                printf("Not marking as idle: last_txn_time=%d, time_since_last_txn=%d, idle_marked=%d\n", 
+                   $last_txn_time, $time_since_last_txn, @idle_marked[$conn_id]);
+            }
+        
     }
 }
 
@@ -82,17 +93,20 @@ usdt:*:start_connection_with_ip_addresses
     @lasttransaction[$conn_id] = nsecs; // Store last transaction time with client IP
     @conn_id_to_ip[$conn_id] = $client_ip;
     @idle_marked[$conn_id];
+    printf("Added mapping: conn_id %d -> IP %s\n", $conn_id, $client_ip);
  }
 
 // Attach to the connection_closed probe to remove connection from maps
 usdt:*:connection_closed
 {
     $conn_id = arg0;
-
-    printf("Connection closed: conn_id %d\n", $conn_id);
+    $client_ip = @conn_id_to_ip[$conn_id];
+    printf("Connection closed: conn_id %d, IP %s\n", $conn_id, $client_ip);
+    @closed_connections[$client_ip]++;
     delete(@lasttransaction[$conn_id]);
     delete(@conn_id_to_ip[$conn_id]);
     delete(@idle_marked[$conn_id]);
+    printf("Removed mapping for conn_id %d\n", $conn_id);
 }
 
 usdt:*:transaction_finished
@@ -100,8 +114,8 @@ usdt:*:transaction_finished
     $conn_id = arg0;
     $client_ip = @conn_id_to_ip[$conn_id];
     printf("Transaction finished: conn_id %d\n", $conn_id);
+    @lasttransaction[$conn_id] = nsecs; // Update last transaction time
     @idle_marked[$conn_id] = 0; //Reset the Idle Mark
-
 }
 
 // Print the result on exit
@@ -111,11 +125,17 @@ END
     printf("\nFinal Statistics:\n");
     printf("Connections by client IP:\n");
     print(@connections);
+    printf("\nClosed connections by client IP:\n");
+    print(@closed_connections);
     printf("\nTotal lines read: %d\n", @readlines);
     printf("\nLast transaction timestamps by connection ID:\n");
     print(@lasttransaction);
     printf("\nFinal Idle Connections:\n");
     print(@idle_connections);
+    printf("\nIdle marked connections:\n");
+    print(@idle_marked);
+    printf("\nConnection ID to IP mapping:\n");
+    print(@conn_id_to_ip);
 
 }
     

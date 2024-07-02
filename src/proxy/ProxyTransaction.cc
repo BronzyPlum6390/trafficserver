@@ -279,8 +279,6 @@ ProxyTransaction::allow_half_open() const
 void
 ProxyTransaction::set_close_connection(HTTPHdr &hdr) const
 {
-  auto conn_id = _proxy_ssn->connection_id();
-  ATS_PROBE1(connection_closed, conn_id);
 }
 
 void

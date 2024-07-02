@@ -24,6 +24,7 @@
 #include "proxy/http/Http1ClientTransaction.h"
 #include "proxy/http/Http1ClientSession.h"
 #include "proxy/http/HttpSM.h"
+#include "ts/ats_probe.h"
 
 void
 Http1ClientTransaction::release()
@@ -33,6 +34,8 @@ Http1ClientTransaction::release()
   // or be put into keep alive state to wait from the next transaction
   this->do_io_read(this->_sm, 0, nullptr);
   _proxy_ssn->clear_session_active();
+  auto conn_id = _proxy_ssn->connection_id();
+  ATS_PROBE1(connection_closed, conn_id);
 }
 
 void
