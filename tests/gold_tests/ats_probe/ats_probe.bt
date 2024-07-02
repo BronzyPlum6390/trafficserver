@@ -104,18 +104,18 @@ usdt:*:connection_closed
     printf("Connection closed: conn_id %d, IP %s\n", $conn_id, $client_ip);
     @closed_connections[$client_ip]++;
     delete(@lasttransaction[$conn_id]);
-    delete(@conn_id_to_ip[$conn_id]);
-    delete(@idle_marked[$conn_id]);
     printf("Removed mapping for conn_id %d\n", $conn_id);
 }
 
 usdt:*:transaction_finished
 {
     $conn_id = arg0;
-    $client_ip = @conn_id_to_ip[$conn_id];
-    printf("Transaction finished: conn_id %d\n", $conn_id);
-    @lasttransaction[$conn_id] = nsecs; // Update last transaction time
-    @idle_marked[$conn_id] = 0; //Reset the Idle Mark
+    if (@lasttransaction[$conn_id]) {
+        $client_ip = @conn_id_to_ip[$conn_id];
+        printf("Transaction finished: conn_id %d\n", $conn_id);
+        @lasttransaction[$conn_id] = nsecs; // Update last transaction time
+        @idle_marked[$conn_id] = 0; //Reset the Idle Mark
+   }
 }
 
 // Print the result on exit
