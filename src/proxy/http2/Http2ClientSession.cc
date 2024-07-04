@@ -23,6 +23,7 @@
 
 #include "proxy/http2/Http2ClientSession.h"
 #include "proxy/http/HttpDebugNames.h"
+#include "ts/ats_probe.h"
 #include "tscore/ink_base64.h"
 #include "proxy/http2/Http2CommonSessionInternal.h"
 #include "iocore/net/TLSSNISupport.h"
@@ -50,6 +51,7 @@ Http2ClientSession::destroy()
 {
   if (!in_destroy) {
     in_destroy = true;
+    ATS_PROBE1(HTTP2_connection_closed, this->con_id);
     REMEMBER(NO_EVENT, this->recursion)
     Http2SsnDebug("session destroy");
     if (_vc) {

@@ -107,6 +107,18 @@ usdt:*:connection_closed
     printf("Removed mapping for conn_id %d\n", $conn_id);
 }
 
+usdt:*:HTTP2_connection_closed
+{
+    $conn_id = arg0;
+    $client_ip = @conn_id_to_ip[$conn_id];
+    printf("HTTP/2 Connection closed: conn_id %d, IP %s\n", $conn_id, $client_ip);
+    @http2_closed_connections[$client_ip]++;
+    delete(@lasttransaction[$conn_id]);
+    delete(@conn_id_to_ip[$conn_id]);
+    delete(@idle_marked[$conn_id]);
+    printf("Removed mapping for HTTP/2 conn_id %d\n", $conn_id);
+}
+
 usdt:*:transaction_finished
 {
     $conn_id = arg0;
@@ -127,6 +139,8 @@ END
     print(@connections);
     printf("\nClosed connections by client IP:\n");
     print(@closed_connections);
+    printf("\nHTTP/2 Closed connections by client IP:\n");
+    print(@http2_closed_connections);
     printf("\nTotal lines read: %d\n", @readlines);
     printf("\nLast transaction timestamps by connection ID:\n");
     print(@lasttransaction);
