@@ -1700,11 +1700,13 @@ HttpSM::create_server_session(NetVConnection &netvc, MIOBuffer *netvc_read_buffe
   retval->sharing_match = static_cast<TSServerSessionSharingMatchMask>(t_state.txn_conf->server_session_sharing_match);
   retval->attach_hostname(t_state.current.server->name);
   retval->new_connection(&netvc, netvc_read_buffer, netvc_reader);
-  ATS_PROBE1(new_origin_server_connection, t_state.current.server->name);
   Dbg(dbg_ctl_ip_address, "Ip origin Found: %s", t_state.current.server->name);
   retval->set_active();
 
   ats_ip_copy(&t_state.server_info.src_addr, netvc.get_local_addr());
+  ip_text_buffer ipb;
+  const char    *ip      = ats_ip_ntop(t_state.client_info.dst_addr, ipb, sizeof(ipb));
+  ATS_PROBE3(new_origin_server_connection, t_state.current.server->name, retval->connection_id(),ip);
 
   // If origin_max_connections or origin_min_keep_alive_connections is set then we are metering
   // the max and or min number of connections per host. Transfer responsibility for this to the

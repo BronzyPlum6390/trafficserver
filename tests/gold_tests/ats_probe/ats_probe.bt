@@ -27,6 +27,7 @@
 BEGIN
 {
   @readlines = 1;
+  @origin_connection_count = 0;
   printf("Monitoring ATS connections and transactions...\n");
 }
 
@@ -77,9 +78,24 @@ interval:s:1
 // Attach to the new_origin_server_connection probe
  usdt:*:new_origin_server_connection
  {  
-     printf("new_origin_server_connection: %s\n", str(arg0));
-     @readlines++;
+    $origin_ip = str(arg2);
+    $conn_id = arg1;
+    printf("New origin connection to IP: %s for conn_id: %d\n", $origin_ip, $conn_id);
+    @origin_connections[$conn_id] = $origin_ip;
+    @conn_id_to_origin_ip[$conn_id] = $origin_ip;
+    @origin_connection_count++;
+    @debug_probe_fired = 1;
  }
+
+ interval:s:10
+{
+    if (@debug_probe_fired == 0) {
+        printf("No origin connection probes have fired in the last 10 seconds.\n");
+    } else {
+        printf("Origin connection probe has fired.\n");
+        @debug_probe_fired = 0;
+    }
+}
 
 // Attach to the start_connection_with_ip_addresses probe and count connections by client IP
 
@@ -150,6 +166,14 @@ END
     print(@idle_marked);
     printf("\nConnection ID to IP mapping:\n");
     print(@conn_id_to_ip);
+    printf("\nOrigin connections by conn_id:\n");
+    if (@origin_connection_count == 0) {
+        printf("No origin connections recorded.\n");
+    } else {
+        print(@origin_connections);
+    }
+    printf("\nConnection ID to Origin IP mapping:\n");
+    print(@conn_id_to_origin_ip);
 
 }
     
