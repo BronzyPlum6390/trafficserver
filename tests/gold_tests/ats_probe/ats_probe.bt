@@ -26,7 +26,7 @@
 
 BEGIN
 {
-  @readlines = 1;
+  @readlines = 0;
   @origin_connection_count = 0;
   printf("Monitoring ATS connections and transactions...\n");
 }
@@ -72,37 +72,57 @@ interval:s:1
             }
         
     }
+
+    // Origin connection check
+    for ($kv : @last_origin_transaction)
+    {
+        $conn_id = $kv.0;
+        $last_txn_time = $kv.1;
+        $idle_threshold_ns = 60 * 1000000000; // 60 seconds in nanoseconds
+        $time_since_last_txn = nsecs - $last_txn_time;
+
+        printf("Origin Conn ID: %d, Time since last txn: %d s\n", $conn_id, $time_since_last_txn / 1000000000);
+
+        // Check if origin connection is idle
+        if ($last_txn_time != 0 && (int64)$time_since_last_txn > $idle_threshold_ns && @idle_origin_marked[$conn_id] == 0)
+        {
+            $server_ip = @origin_connections[$conn_id];
+            if ($server_ip != "")
+            {
+                printf("Marking idle origin connection to IP: %s\n", $server_ip);
+                @idle_origin_marked[$conn_id] = 1; // Mark this connection as idle
+            }
+            else
+            {
+                printf("Warning: No IP found for origin conn_id: %d\n", $conn_id);
+            }
+        }
+    }
 }
 
 
 // Attach to the new_origin_server_connection probe
  usdt:*:new_origin_server_connection
  {  
-    $origin_ip = str(arg2);
+    $server_name = str(arg0);
     $conn_id = arg1;
-    printf("New origin connection to IP: %s for conn_id: %d\n", $origin_ip, $conn_id);
-    @origin_connections[$conn_id] = $origin_ip;
-    @conn_id_to_origin_ip[$conn_id] = $origin_ip;
+    $ip = str(arg2);
+    printf("new_origin_server_connection: Server: %s, Conn ID: %d, IP: %s\n", $server_name, $conn_id, $ip);
+    @origin_connections[$conn_id] = $ip;
+    @last_origin_transaction[$conn_id] = nsecs; // Initialize last transaction time
+    @idle_origin_marked[$conn_id] = 0;
     @origin_connection_count++;
-    @debug_probe_fired = 1;
+    @readlines++;
  }
 
- interval:s:10
-{
-    if (@debug_probe_fired == 0) {
-        printf("No origin connection probes have fired in the last 10 seconds.\n");
-    } else {
-        printf("Origin connection probe has fired.\n");
-        @debug_probe_fired = 0;
-    }
-}
 
 // Attach to the start_connection_with_ip_addresses probe and count connections by client IP
 
 usdt:*:start_connection_with_ip_addresses
- {     
-    $client_ip = str(arg0);
-    $conn_id = arg2;
+ {    
+    
+    $client_ip = str(arg2);
+    $conn_id = arg1;
 
     printf("New connection from IP: %s\n", $client_ip);
     @connections[$client_ip]++; // Count connections by client IP
@@ -110,6 +130,7 @@ usdt:*:start_connection_with_ip_addresses
     @conn_id_to_ip[$conn_id] = $client_ip;
     @idle_marked[$conn_id];
     printf("Added mapping: conn_id %d -> IP %s\n", $conn_id, $client_ip);
+    
  }
 
 // Attach to the connection_closed probe to remove connection from maps
@@ -146,6 +167,23 @@ usdt:*:transaction_finished
    }
 }
 
+// Added a probe to handle origin connection closure
+usdt:*:origin_connection_closed
+{
+    $conn_id = arg0;
+    $server_ip = @origin_connections[$conn_id];
+    printf("Origin connection closed: conn_id %d, IP %s\n", $conn_id, $server_ip);
+    // Check if the connection was idle before closing
+    if (@idle_origin_marked[$conn_id] == 1) {
+        @idle_origin_connections[$server_ip]++;
+        printf("Closed idle origin connection to IP: %s\n", $server_ip);
+    }
+    @closed_origin_connections[$server_ip]++;
+    delete(@last_origin_transaction[$conn_id]);
+    delete(@origin_connections[$conn_id]);
+    delete(@idle_origin_marked[$conn_id]);
+}
+
 // Print the result on exit
 
 END
@@ -166,14 +204,15 @@ END
     print(@idle_marked);
     printf("\nConnection ID to IP mapping:\n");
     print(@conn_id_to_ip);
-    printf("\nOrigin connections by conn_id:\n");
-    if (@origin_connection_count == 0) {
-        printf("No origin connections recorded.\n");
-    } else {
-        print(@origin_connections);
-    }
-    printf("\nConnection ID to Origin IP mapping:\n");
-    print(@conn_id_to_origin_ip);
+     printf("\nOrigin connections by conn_id:\n");
+    print(@origin_connections);
+    printf("\nTotal origin connections: %d\n", @origin_connection_count);
+    printf("\nIdle Origin Connections:\n");
+    print(@idle_origin_connections);
+    printf("\nIdle marked origin connections:\n");
+    print(@idle_origin_marked);
+    printf("\nClosed origin connections:\n");
+    print(@closed_origin_connections);
 
 }
     

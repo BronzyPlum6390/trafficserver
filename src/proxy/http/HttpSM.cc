@@ -1705,8 +1705,10 @@ HttpSM::create_server_session(NetVConnection &netvc, MIOBuffer *netvc_read_buffe
 
   ats_ip_copy(&t_state.server_info.src_addr, netvc.get_local_addr());
   ip_text_buffer ipb;
-  const char    *ip      = ats_ip_ntop(t_state.client_info.dst_addr, ipb, sizeof(ipb));
-  ATS_PROBE3(new_origin_server_connection, t_state.current.server->name, retval->connection_id(),ip);
+  const char    *ip = ats_ip_ntop(t_state.client_info.dst_addr, ipb, sizeof(ipb));
+  Debug("http_trans", "New origin server connection: Server: %s, Conn ID: % " PRId64 ", IP: %s",
+      t_state.current.server->name, retval->connection_id(), ip);
+  ATS_PROBE3(new_origin_server_connection, t_state.current.server->name, retval->connection_id(), ip);
 
   // If origin_max_connections or origin_min_keep_alive_connections is set then we are metering
   // the max and or min number of connections per host. Transfer responsibility for this to the
@@ -3238,6 +3240,13 @@ HttpSM::tunnel_handler_server(int event, HttpTunnelProducer *p)
     }
     if (release_origin_connection) {
       // Release the session back into the shared session pool
+      // Get the server session  
+      PoolableSession *server_session = static_cast<PoolableSession *>(server_txn->get_proxy_ssn());
+      if (server_session) {
+        // Get the connection ID from the server session
+        auto conn_id = server_session->connection_id();
+        ATS_PROBE1(origin_connection_closed, conn_id);
+      }
       server_txn->set_inactivity_timeout(HRTIME_SECONDS(t_state.txn_conf->keep_alive_no_activity_timeout_out));
       server_txn->release();
     }
