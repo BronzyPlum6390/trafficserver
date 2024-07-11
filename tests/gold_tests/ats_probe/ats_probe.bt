@@ -27,15 +27,14 @@
 BEGIN
 {
   @readlines = 0;
-  @total_connection_count = 0;
   @total_transactions = 0;
   @min_idle_time = (uint64)(-1); // Initialized to max value
   @max_idle_time = 0;
+  @sum_idle_time = 0;
+  @idle_connection_count = 0;
+  printf("Monitoring ATS connections and transactions...\n");
   @total_connections = 0;
   @sum_transactions = 0;
-  @idle_connection_count = 0;
-  @sum_idle_time = 0;
-  printf("Monitoring ATS connections and transactions...\n");
 }
 
 
@@ -44,8 +43,6 @@ interval:s:1
     
 
 // Iterate over elements in @lasttransaction map
-    $total_connections = 0;
-    $sum_transactions = 0;
     for ($kv : @lasttransaction)
     {
         $conn_id = $kv.0; // Get client IP (key)
@@ -62,7 +59,7 @@ interval:s:1
             if ($last_txn_time != 0 && (int64)$time_since_last_txn > $idle_threshold_ns)
             {
                 $client_ip = @conn_id_to_ip[$conn_id];
-                @idle_time[$conn_id] += 1000000000; 
+                @idle_time[$conn_id] = (int64)$time_since_last_txn; 
 
                 if ((int64)@idle_time[$conn_id] < (int64)@min_idle_time)
                 {
@@ -72,22 +69,24 @@ interval:s:1
                 {
                     @max_idle_time = @idle_time[$conn_id];
                 }
+                @sum_idle_time += (int64)@idle_time[$conn_id];
+                @idle_connection_count++;
 
                 if (@idle_marked[$conn_id] == 0){
 
                 
                 // Increment idle connection count
-                if ($client_ip != "")
-                {
-                    // Increment idle connection count
-                    @idle_connections[$client_ip]++;
-                    printf("Idle connection from IP: %s\n", $client_ip);
-                    @idle_marked[$conn_id] = 1; // Mark this connection as already announced idle
-                }
-                else
-                {
-                    printf("Warning: No IP found for conn_id: %d\n", $conn_id);
-                }
+                    if ($client_ip != "")
+                    {
+                        // Increment idle connection count
+                        // @idle_connections[$client_ip] += 1;
+                        printf("Idle connection from IP: %s\n", $client_ip);
+                        @idle_marked[$conn_id] = 1; // Mark this connection as already announced idle
+                    }
+                    else
+                    {
+                        printf("Warning: No IP found for conn_id: %d\n", $conn_id);
+                    }
             }
             }
             else
@@ -123,6 +122,7 @@ interval:s:1
             }
         }
     }
+    
 }
 
 
@@ -156,6 +156,7 @@ usdt:*:start_connection_with_ip_addresses
     @idle_marked[$conn_id] = 0;
     @transactions_per_connection[$conn_id] = 0;
     printf("Added mapping: conn_id %d -> IP %s\n", $conn_id, $client_ip);
+    @total_connections++;
     
  }
 
@@ -200,6 +201,7 @@ usdt:*:transaction_finished
         @total_transactions++;
         @transactions_per_connection[$conn_id]++;
    }
+    @sum_transactions++;
 }
 
 // Added a probe to handle origin connection closure
@@ -234,7 +236,7 @@ END
     printf("\nLast transaction timestamps by connection ID:\n");
     print(@lasttransaction);
     printf("\nFinal Idle Connections:\n");
-    print(@idle_connections);
+    //print(@idle_connections);
     printf("\nIdle marked connections:\n");
     print(@idle_marked);
     printf("\nConnection ID to IP mapping:\n");
@@ -250,48 +252,33 @@ END
     print(@closed_origin_connections);
 
     printf("\nAdditional Statistics:\n");
+    printf("Total connections: %d\n", @total_connections);
     printf("Total transactions: %d\n", @total_transactions);
 
-        @total_connections = 0;
-    @sum_transactions = 0;
-    @sum_idle_time = 0;
-    @idle_connection_count = 0;
-    for ($kv : @transactions_per_connection) 
-    {
-        @total_connections++;
-        @sum_transactions += $kv.1;
-    }
-    for ($kv : @idle_time)
-    {
-        if ($kv.1 > 0) {
-            @sum_idle_time += $kv.1;
-            @idle_connection_count++;
-        }
-    }
-    
     if (@origin_connection_count > 0) {
-        printf("Ratio of transactions to origin connections: %d\n", 
-               (uint64)@total_transactions / (uint64)@origin_connection_count);
+        $ratio = (uint64)@total_transactions / (uint64)@origin_connection_count;
+        printf("Ratio of transactions to origin connections: %d\n", $ratio);
     }
 
     if (@total_connections > 0) {
-        printf("Average transactions per connection: %d\n", 
-               (uint64)@sum_transactions / (uint64)@total_connections);
+        $avg_txn = (uint64)@total_transactions / (uint64)@total_connections;
+        printf("Average transactions per connection: %d\n", $avg_txn);
     }
 
     printf("Idle time statistics:\n");
     if (@min_idle_time != (uint64)(-1)) {
-        printf("  Min idle time: %d seconds\n", (uint64)@min_idle_time / 1000000000);
+        $min_idle_seconds = (uint64)@min_idle_time / 1000000000;
+        printf("  Min idle time: %d seconds\n", $min_idle_seconds);
     } else {
         printf("  Min idle time: N/A\n");
     }
-    printf("  Max idle time: %d seconds\n", (uint64)@max_idle_time / 1000000000);
+    $max_idle_seconds = (uint64)@max_idle_time / 1000000000;
+    printf("  Max idle time: %d seconds\n", $max_idle_seconds);
     
     if (@idle_connection_count > 0) {
-        printf("  Average idle time: %d seconds\n", 
-               (uint64)@sum_idle_time / ((uint64)@idle_connection_count * 1000000000));
+        $avg_idle_seconds = (uint64)@sum_idle_time / ((uint64)@idle_connection_count * 1000000000);
+        printf("  Average idle time: %d seconds\n", $avg_idle_seconds);
     } else {
         printf("  Average idle time: N/A\n");
     }
 }
-    
