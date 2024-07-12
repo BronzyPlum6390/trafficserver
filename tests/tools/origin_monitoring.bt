@@ -1,0 +1,100 @@
+#!/usr/bin/env bpftrace
+
+BEGIN
+{
+  @readlines = 0;
+  @total_transactions = 0;
+  printf("Monitoring ATS origin connections and transactions...\n");
+  @origin_connection_count = 0;
+  @sum_transactions = 0;
+}
+
+interval:s:1
+{
+    for ($kv : @last_origin_transaction)
+    {
+        $conn_id = $kv.0;
+        $last_txn_time = $kv.1;
+        $idle_threshold_ns = 60 * 1000000000;
+        $time_since_last_txn = nsecs - $last_txn_time;
+
+        printf("Origin Conn ID: %d, Time since last txn: %d s\n", $conn_id, $time_since_last_txn / 1000000000);
+
+        if ($last_txn_time != 0 && (int64)$time_since_last_txn > $idle_threshold_ns && @idle_origin_marked[$conn_id] == 0)
+        {
+            $server_ip = @origin_connections[$conn_id];
+            if ($server_ip != "")
+            {
+                printf("Marking idle origin connection to IP: %s\n", $server_ip);
+                @idle_origin_marked[$conn_id] = 1;
+            }
+            else
+            {
+                printf("Warning: No IP found for origin conn_id: %d\n", $conn_id);
+            }
+        }
+    }
+}
+
+usdt:*:new_origin_server_connection
+{  
+    $server_name = str(arg0);
+    $conn_id = arg1;
+    $ip = str(arg2);
+    printf("new_origin_server_connection: Server: %s, Conn ID: %d, IP: %s\n", $server_name, $conn_id, $ip);
+    @origin_connections[$conn_id] = $ip;
+    @last_origin_transaction[$conn_id] = nsecs;
+    @idle_origin_marked[$conn_id] = 0;
+    @origin_connection_count++;
+    @readlines++;
+}
+
+usdt:*:transaction_finished
+{
+    $conn_id = arg0;
+    if (@last_origin_transaction[$conn_id]) {
+        printf("Origin transaction finished: conn_id %d\n", $conn_id);
+        @last_origin_transaction[$conn_id] = nsecs;
+        @idle_origin_marked[$conn_id] = 0;
+        @total_transactions++;
+   }
+    @sum_transactions++;
+}
+
+usdt:*:origin_connection_closed
+{
+    $conn_id = arg0;
+    $server_ip = @origin_connections[$conn_id];
+    printf("Origin connection closed: conn_id %d, IP %s\n", $conn_id, $server_ip);
+    if (@idle_origin_marked[$conn_id] == 1) {
+        @idle_origin_connections[$server_ip]++;
+        printf("Closed idle origin connection to IP: %s\n", $server_ip);
+    }
+    @closed_origin_connections[$server_ip]++;
+    delete(@last_origin_transaction[$conn_id]);
+    delete(@origin_connections[$conn_id]);
+    delete(@idle_origin_marked[$conn_id]);
+}
+
+END
+{
+    printf("\nFinal Statistics:\n");
+    printf("\nTotal lines read: %d\n", @readlines);
+    printf("\nOrigin connections by conn_id:\n");
+    print(@origin_connections);
+    printf("\nTotal origin connections: %d\n", @origin_connection_count);
+    printf("\nIdle Origin Connections:\n");
+    print(@idle_origin_connections);
+    printf("\nIdle marked origin connections:\n");
+    print(@idle_origin_marked);
+    printf("\nClosed origin connections:\n");
+    print(@closed_origin_connections);
+
+    printf("\nAdditional Statistics:\n");
+    printf("Total transactions: %d\n", @total_transactions);
+
+    if (@origin_connection_count > 0) {
+        $ratio = (uint64)@total_transactions / (uint64)@origin_connection_count;
+        printf("Ratio of transactions to origin connections: %d\n", $ratio);
+    }
+}

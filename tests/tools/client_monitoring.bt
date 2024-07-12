@@ -1,0 +1,163 @@
+#!/usr/bin/env bpftrace
+
+BEGIN
+{
+  @readlines = 0;
+  @total_transactions = 0;
+  @min_idle_time = (uint64)(-1);
+  @max_idle_time = 0;
+  @sum_idle_time = 0;
+  @idle_connection_count = 0;
+  printf("Monitoring ATS client connections and transactions...\n");
+  @total_connections = 0;
+  @sum_transactions = 0;
+}
+
+interval:s:1
+{
+    for ($kv : @lasttransaction)
+    {
+        $conn_id = $kv.0;
+        $last_txn_time = $kv.1;
+        $time_since_last_txn = nsecs - $last_txn_time;
+        $idle_threshold_ns = 60 * 1000000000;
+
+        printf("Conn ID: %d, Time since last txn: %d s\n", $conn_id, $time_since_last_txn / 1000000000);
+
+        if ($last_txn_time != 0 && (int64)$time_since_last_txn > $idle_threshold_ns)
+        {
+            $client_ip = @conn_id_to_ip[$conn_id];
+            @idle_time[$conn_id] = (int64)$time_since_last_txn; 
+
+            if ((int64)@idle_time[$conn_id] < (int64)@min_idle_time)
+            {
+                @min_idle_time = @idle_time[$conn_id];
+            }
+            if (@idle_time[$conn_id] > @max_idle_time)
+            {
+                @max_idle_time = @idle_time[$conn_id];
+            }
+            @sum_idle_time += (int64)@idle_time[$conn_id];
+            @idle_connection_count++;
+
+            if (@idle_marked[$conn_id] == 0){
+                if ($client_ip != "")
+                {
+                    printf("Idle connection from IP: %s\n", $client_ip);
+                    @idle_marked[$conn_id] = 1;
+                }
+                else
+                {
+                    printf("Warning: No IP found for conn_id: %d\n", $conn_id);
+                }
+            }
+        }
+        else
+        {
+            printf("Not marking as idle: last_txn_time=%d, time_since_last_txn=%d, idle_marked=%d\n", 
+               $last_txn_time, $time_since_last_txn, @idle_marked[$conn_id]);
+        }
+    }
+}
+
+usdt:*:start_connection_with_ip_addresses
+{    
+    $client_ip = str(arg2);
+    $conn_id = arg1;
+
+    printf("New connection from IP: %s\n", $client_ip);
+    @connections[$client_ip]++;
+    @lasttransaction[$conn_id] = nsecs;
+    @conn_id_to_ip[$conn_id] = $client_ip;
+    @idle_marked[$conn_id] = 0;
+    @transactions_per_connection[$conn_id] = 0;
+    printf("Added mapping: conn_id %d -> IP %s\n", $conn_id, $client_ip);
+    @total_connections++;
+}
+
+usdt:*:connection_closed
+{
+    $conn_id = arg0;
+    $client_ip = @conn_id_to_ip[$conn_id];
+    printf("Connection closed: conn_id %d, IP %s\n", $conn_id, $client_ip);
+    @closed_connections[$client_ip]++;
+    delete(@lasttransaction[$conn_id]);
+    delete(@conn_id_to_ip[$conn_id]);
+    delete(@idle_marked[$conn_id]);
+    delete(@idle_time[$conn_id]);
+    delete(@transactions_per_connection[$conn_id]);
+    printf("Removed mapping for conn_id %d\n", $conn_id);
+}
+
+usdt:*:HTTP2_connection_closed
+{
+    $conn_id = arg0;
+    $client_ip = @conn_id_to_ip[$conn_id];
+    printf("HTTP/2 Connection closed: conn_id %d, IP %s\n", $conn_id, $client_ip);
+    @http2_closed_connections[$client_ip]++;
+    delete(@lasttransaction[$conn_id]);
+    delete(@conn_id_to_ip[$conn_id]);
+    delete(@idle_marked[$conn_id]);
+    delete(@idle_time[$conn_id]);
+    delete(@transactions_per_connection[$conn_id]);
+    printf("Removed mapping for HTTP/2 conn_id %d\n", $conn_id);
+}
+
+usdt:*:transaction_finished
+{
+    $conn_id = arg0;
+    if (@lasttransaction[$conn_id]) {
+        $client_ip = @conn_id_to_ip[$conn_id];
+        printf("Transaction finished: conn_id %d\n", $conn_id);
+        @lasttransaction[$conn_id] = nsecs;
+        @idle_marked[$conn_id] = 0;
+        @idle_time[$conn_id] = 0;
+        @total_transactions++;
+        @transactions_per_connection[$conn_id]++;
+   }
+    @sum_transactions++;
+}
+
+END
+{
+    printf("\nFinal Statistics:\n");
+    printf("Connections by client IP:\n");
+    print(@connections);
+    printf("\nClosed connections by client IP:\n");
+    print(@closed_connections);
+    printf("\nHTTP/2 Closed connections by client IP:\n");
+    print(@http2_closed_connections);
+    printf("\nTotal lines read: %d\n", @readlines);
+    printf("\nLast transaction timestamps by connection ID:\n");
+    print(@lasttransaction);
+    printf("\nIdle marked connections:\n");
+    print(@idle_marked);
+    printf("\nConnection ID to IP mapping:\n");
+    print(@conn_id_to_ip);
+
+    printf("\nAdditional Statistics:\n");
+    printf("Total connections: %d\n", @total_connections);
+    printf("Total transactions: %d\n", @total_transactions);
+
+    if (@total_connections > 0) {
+        $avg_txn = (uint64)@total_transactions / (uint64)@total_connections;
+        printf("Average transactions per connection: %d\n", $avg_txn);
+    }
+
+    printf("Idle time statistics:\n");
+    if (@min_idle_time != (uint64)(-1)) {
+        $min_idle_seconds = (uint64)@min_idle_time / 1000000000;
+        printf("  Min idle time: %d seconds\n", $min_idle_seconds);
+    } else {
+        printf("  Min idle time: N/A\n");
+    }
+    $max_idle_seconds = (uint64)@max_idle_time / 1000000000;
+    printf("  Max idle time: %d seconds\n", $max_idle_seconds);
+    
+    if (@idle_connection_count > 0) {
+        $avg_idle_seconds = (uint64)@sum_idle_time / ((uint64)@idle_connection_count * 1000000000);
+        printf("  Average idle time: %d seconds\n", $avg_idle_seconds);
+    } else {
+        printf("  Average idle time: N/A\n");
+    }
+}
